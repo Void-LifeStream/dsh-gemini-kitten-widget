@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>kitten preview</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #1b1c2a; }
+</style>
+</head>
+<body>
+<!--
+  预览页：由 tools/uitest.mjs 起的本地 HTTP 服务提供。
+  同一份脚本注入两次 —— 模拟「桌面端注入行 + web 形态 tapIndex」双通道同时生效，验幂等。
+-->
+<script src="/assets/kitten.js"></script>
+<script src="/assets/kitten.js"></script>
+</body>
+</html>
