@@ -90,12 +90,27 @@ await routes.get('exact /dsh-kitten/state').handler({ headers: {} }, makeRes('st
 await routes.get('exact /dsh-kitten/widget.js').handler({ headers: {} }, makeRes('widget'))
 
 // 附：账本里 gemini-* 事件逐条列出（人工核对口径）
+//   ⚠️ 这一步是**可选的**：账本是鲸鱼娘挂件（dsh-whale-widget）写的，没装它、或刚装好还没跑过，
+//   这个文件就不存在。不能因为"顺手附带的核对"让整个自测以异常收场（2026-10-16 冷启动实测踩到）。
 const ledgerPath = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), '.dshw-usage.json')
-const led = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'))
-const bj = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'medium' })
-const la = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', dateStyle: 'short', timeStyle: 'medium' })
-console.log('\n账本里所有 gemini-* 事件（本地时间 / 太平洋时间）:')
-for (const e of led.events) {
-  if (!/^gemini-/i.test(String(e.model || ''))) continue
-  console.log('  ', e.model, '| 北京', bj.format(new Date(e.ts)), '| 太平洋', la.format(new Date(e.ts)))
+let led = null
+try {
+  led = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'))
+} catch (err) {
+  console.log('\n（可选）账本 ' + ledgerPath + ' 读不到，跳过逐条核对 —— 这是正常的：')
+  console.log('  该文件由鲸鱼娘挂件（dsh-whale-widget）写入；没装它、或它还没跑过，就不存在。')
+  console.log('  本插件此时会自动改用会话日志计数（上面的 byModel 就是）。')
 }
+if (led && Array.isArray(led.events)) {
+  const bj = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'medium' })
+  const la = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', dateStyle: 'short', timeStyle: 'medium' })
+  console.log('\n账本里所有 gemini-* 事件（本地时间 / 太平洋时间）:')
+  let n = 0
+  for (const e of led.events) {
+    if (!/^gemini-/i.test(String(e.model || ''))) continue
+    n++
+    console.log('  ', e.model, '| 北京', bj.format(new Date(e.ts)), '| 太平洋', la.format(new Date(e.ts)))
+  }
+  if (!n) console.log('   （账本里还没有 gemini-* 事件）')
+}
+console.log('\n自测结束 —— 以上全部通过即为正常。')
