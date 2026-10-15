@@ -3,6 +3,12 @@
 给 **DSH 界面**右下角常驻的一只 **Q 版 Gemini 猫娘**，实时显示 Google Gemini API 免费层的
 **今日已用 / 剩余次数**。
 
+![预览](docs/preview.png)
+
+*点猫娘本体换台词（上图）；点她肚子上的徽章轮换查看各个型号（下图，色级随之变化）。*
+
+![切换型号](docs/switch-model.png)
+
 ```
         ╭──────────────────╮
         │ 还有 12 次额度躺着 │     ← 点一下换台词
@@ -88,13 +94,40 @@ Please retry in 13h23m35s.
 
 ## 安装
 
+**方式一：直接从仓库装**（推荐）
+
+```
+# 在 DSH 会话里对 agent 说：
+#   plugin_manager install_bundle  target = git+https://github.com/Void-LifeStream/dsh-gemini-kitten-widget
+```
+
+**方式二：先 clone，再用本地 link**
+
 ```powershell
-# 在 DSH 会话里让 DSH 自己装（桌面端读 desktop profile）
-#   plugin_manager install_bundle  target = link:<本目录绝对路径>
+git clone https://github.com/Void-LifeStream/dsh-gemini-kitten-widget
+```
+
+```
+# 然后让 DSH 装本地目录（桌面端读 desktop profile，CLI 拒绝 --profile desktop）：
+#   plugin_manager install_bundle  target = link:<clone 下来的绝对路径>
 ```
 
 ⚠️ **装完必须重启 DSH**：桌面端（Electron）的注入表是**宿主启动时一次性收集**的，
 插件在运行期被加载时这一行进不了表 ⇒ 挂件不会出现。
+**web 形态**（`dsh web`）走 `tapIndex`，同样建议重启一次。
+
+⚠️ **依赖：无**。不需要任何 API key —— 本插件**只读本机数据**（DSH 会话日志 + 可选的余额账本），
+**从不联网**、不写配置、不碰凭据。
+
+⚠️ **没装鲸鱼娘挂件（`dsh-whale-widget`）也能用**：账本只是兜底数据源，没有它时会话日志照常工作。
+
+### 装完先自测一下（可选）
+
+```bash
+node tools/selftest.mjs   # host 半离线自检：模块加载 / 注入行 / 路由 / 配额算法
+```
+
+它在**没有账本、没有会话日志**的干净环境里也应该跑通并打印 `自测结束`（退出码 0）。
 
 ## 自定义台词
 
