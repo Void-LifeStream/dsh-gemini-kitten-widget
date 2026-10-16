@@ -111,7 +111,11 @@ let st = await readState()
 check('冷扫：瓶颈模型 3.8-flash 计 2 次', st.used === 2, 'used=' + st.used + ' bottleneck=' + st.bottleneck)
 check('冷扫：所有模型合计 3 次', st.totalUsed === 3, 'totalUsed=' + st.totalUsed)
 check('冷扫：来源标为 session-log', st.source === 'session-log', st.source)
-check('冷扫：按模型分组正确', JSON.stringify(st.byModel) === '{"gemini-3.8-flash":2,"gemini-3.7-flash":1}', JSON.stringify(st.byModel))
+// ⚠️ 2026-10-16 起 byModel 会**补全「见过但今天没用」的模型（值为 0）** ——
+//    所以断言不能再写死整串 JSON，只看**有调用量的那几个**。
+const nonZero = (bm) => Object.fromEntries(Object.entries(bm).filter(([, v]) => v > 0))
+check('冷扫：按模型分组正确（只看非零项）', JSON.stringify(nonZero(st.byModel)) === '{"gemini-3.8-flash":2,"gemini-3.7-flash":1}', JSON.stringify(nonZero(st.byModel)))
+check('冷扫：今天没用过的模型以 0 补全（点徽章能切到）', Object.keys(st.byModel).length > 2, Object.keys(st.byModel).length + ' 个模型')
 check('冷扫：昨天的调用没被计入', st.totalUsed === 3, 'totalUsed=' + st.totalUsed)
 
 const t1 = Date.now()
@@ -125,7 +129,7 @@ fs.appendFileSync(LOG, msg(LA_NOON + 2000, 'gemini-3.8-flash', 4, 2))
 st = await readState()
 check('追加 2 次后瓶颈模型 = 4（增量累加，旧帧不重复计）', st.used === 4, 'used=' + st.used)
 check('追加后合计 = 5', st.totalUsed === 5, 'totalUsed=' + st.totalUsed)
-check('追加后分组 = 3.8:4 / 3.7:1', JSON.stringify(st.byModel) === '{"gemini-3.8-flash":4,"gemini-3.7-flash":1}', JSON.stringify(st.byModel))
+check('追加后分组 = 3.8:4 / 3.7:1（只看非零项）', JSON.stringify(nonZero(st.byModel)) === '{"gemini-3.8-flash":4,"gemini-3.7-flash":1}', JSON.stringify(nonZero(st.byModel)))
 
 // ===== ③ 半截帧 =====
 const full = msg(LA_NOON + 3000, 'gemini-3.8-flash', 5, 1)
