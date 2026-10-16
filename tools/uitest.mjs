@@ -38,6 +38,8 @@ function findChrome() {
 // ===== 假 host：把插件的三个真实端点按同一形状提供出来 =====
 let mockUsed = 5
 let serveArt = true
+// 配额日（UTC）—— 「每配额日只喊一次」这条判据要能跨日测试，所以做成可变的
+let mockToday = '2026-10-15'
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0]
   const send = (code, type, body) => {
@@ -56,7 +58,7 @@ const server = http.createServer((req, res) => {
     const ratio = mockUsed / limit
     return send(200, 'application/json; charset=utf-8', JSON.stringify({
       ok: true,
-      today: '2026-10-15',
+      today: mockToday,
       tz: 'UTC',
       used: mockUsed,
       limit,
@@ -256,6 +258,39 @@ check('点满一轮 → 回到最紧的型号', /3\.8-flash/.test(bs.row2) && bs
 // 点徽章应当播报"切换提示"（而不是让猫娘本体抢去换随机台词）
 const bubText = await page.$eval('.dshk-bubble', (n) => ({ t: n.textContent, shown: n.classList.contains('dshk-show') }))
 check('气泡播报的是切换提示', bubText.shown && /还剩 \d+ 次/.test(bubText.t), bubText.t)
+
+console.log('\n【10】阈值主动提醒（用尽 / 80% / 每配额日只喊一次）')
+const bubbleText = () =>
+  page.$eval('.dshk-bubble', (n) => ({ t: n.textContent, shown: n.classList.contains('dshk-show') }))
+
+// (a) 3.8-flash 实测用尽 ⇒ 一上线就该喊，且优先于"本喵上线了"
+await page.evaluate(() => window.localStorage.clear())
+mockToday = '2026-10-15'
+await load(20)
+let ab = await bubbleText()
+check('实测用尽 → 主动喊"用光"（优先于上线语）', ab.shown && /用光/.test(ab.t), ab.t)
+
+// (b) 同一个配额日再刷新 ⇒ 不重复喊（否则 30 秒刷一次就喊一次，会烦死人）
+await load(20)
+ab = await bubbleText()
+check('同一配额日不重复喊', !/用光/.test(ab.t), 'shown=' + ab.shown + ' | ' + ab.t)
+
+// (c) 跨配额日 ⇒ 去重状态作废，重新提醒
+mockToday = '2026-10-16'
+await load(20)
+ab = await bubbleText()
+check('跨配额日后重新提醒', ab.shown && /用光/.test(ab.t), ab.t)
+
+// (d) 到了 80% 但没用尽 ⇒ 提醒还剩几次
+await page.evaluate(() => window.localStorage.clear())
+mockToday = '2026-10-17'
+await load(17)
+ab = await bubbleText()
+check('到 80% → 提醒还剩几次', ab.shown && /只剩 3 次/.test(ab.t), ab.t)
+
+// 收尾：别把告警状态与配额日留给后面的用例
+await page.evaluate(() => window.localStorage.clear())
+mockToday = '2026-10-15'
 
 console.log('\n【9】控制台')
 // 资源 404 要排除：那是【2】故意关掉图片服务造出来的，属于预期
