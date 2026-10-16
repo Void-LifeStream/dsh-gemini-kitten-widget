@@ -43,7 +43,8 @@ const server = http.createServer((req, res) => {
     const limit = 20
     const ratio = mockUsed / limit
     return send(200, 'application/json; charset=utf-8', JSON.stringify({
-      ok: true, used: mockUsed, limit, remaining: Math.max(0, limit - mockUsed), ratio,
+      // today 必须给：真实 host 会下发它（lib/index.js），阈值提醒的"每配额日只喊一次"也靠它
+      ok: true, today: new Date().toISOString().slice(0, 10), used: mockUsed, limit, remaining: Math.max(0, limit - mockUsed), ratio,
       level: ratio >= 0.95 ? 'danger' : ratio >= 0.8 ? 'warn' : 'ok',
       bottleneck: 'gemini-3.8-flash',
       exhaustedModels: mockUsed >= limit ? ['gemini-3.8-flash'] : [],
