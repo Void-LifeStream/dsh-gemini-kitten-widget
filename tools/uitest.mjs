@@ -72,6 +72,8 @@ const server = http.createServer((req, res) => {
         { model: 'gemini-3.6-flash', used: 2, remaining: 18, exhausted: false },
       ],
       cost: 0.4353,
+      // 今日合计（副行会显示它；缺了也能降级，只是不显示"今日 N 次"）
+      totalUsed: mockUsed + 19,
       byModel: { 'gemini-3.8-flash': mockUsed },
       source: 'session-log',
       degraded: false,
@@ -147,7 +149,8 @@ const info = await page.evaluate(() => {
   }
 })
 check('额度数字渲染', info.used === '5' && info.limit === '/20', info.used + info.limit)
-check('副行显示型号 + 重置倒计时', /3\.8-flash/.test(info.row2) && /后重置/.test(info.row2), info.row2)
+// 副行现在 = 型号 + 该型号剩余 + 今日合计（重置时间已挪进 tooltip）
+check('副行显示型号 + 剩余 + 今日合计', /3\.8-flash/.test(info.row2) && /剩/.test(info.row2) && /今日\d+次/.test(info.row2), info.row2)
 check('状态分级 = ok', info.level === 'ok')
 check('用的是 PNG 立绘（不是 SVG）', info.hasImg && !info.hasSvg)
 check('立绘真的加载成功', info.imgOk, 'naturalWidth=' + info.naturalW)
