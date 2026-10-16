@@ -29,6 +29,8 @@
   var REFRESH_MS = 30000
   var KEY_POS = 'dsh-kitten-widget:pos'
   var KEY_LINE = 'dsh-kitten-widget:line'
+  // 阈值提醒的「这个配额日已经喊过哪几条」——跨刷新保持；键里带配额日，跨日自动作废。
+  var KEY_ALERT = 'dsh-kitten-widget:alerts'
 
   // ==========================================================================
   // 台词库
@@ -592,7 +594,8 @@
           fillEl.style.width = (ratio * 100).toFixed(1) + '%'
           // 副行：**型号 + 该型号剩余 + 今日合计**。
           // 为什么要"今日合计"：原先只显示"最紧的那个模型"，于是**别的会话派子代理消耗配额时，
-          // 只要没顶到 80% 告警线，挂件就一声不响**。合计放在这一行，一眼可见。
+          // 只要没顶到 80% 告警线，挂件就一声不响**。
+          // 合计放在这一行，一眼可见。
           // 重置时间挪进 tooltip（徽章宽度有限，一行放不下三样）。
           var parts = []
           if (v) parts.push(shortModel(v.model) + ' 剩' + vRemain)
@@ -609,6 +612,69 @@
         }
       } catch (err) {
         console.error(LOG + ' 渲染失败', err)
+      }
+    }
+
+    /**
+     * 阈值主动提醒 —— 要的是**可见性**；但"用量又涨了"和"马上要撞 429 了"不是一回事：
+     * 免费层每模型 20 次/天，撞 429 就等于白烧一轮子代理 ⇒ 快用光 / 已用光必须专门喊。
+     *
+     * 规则（每个配额日每条只喊一次 —— 否则 30 秒刷一次就喊一次，会烦死人）：
+     *   ① 某型号**实测用尽**（host 用 429 原文确认过，比本地估算权威）
+     *   ② 最紧的型号到 80%（还剩几次，该换型号了）
+     * 优先级 ① > ② > 日常的「总量涨了」。返回 null = 这次不用喊。
+     *
+     * 判据只读本次 payload、不读 state —— 免得受 render 的时序影响。
+     */
+    function thresholdAlert(data) {
+      try {
+        // 配额日优先用 host 下发的 today（与它的重置口径严格一致）。
+        // ⚠️ 万一它没给（老 host / 测试用的 mock），**退化成客户端自算的 UTC 日**，
+        // 而不是直接放弃 —— 提醒宁可晚一天重置，也不能整个静默失效。
+        // （2026-10-16 实测踩到：预览工具 shot.mjs 的 mock 没给 today，提醒就一声不响，
+        //   看图以为"功能没生效"，其实是判据提前 return 了。）
+        var day = String(data.today || '')
+        if (!day) {
+          var d2 = new Date()
+          day = d2.getUTCFullYear() + '-' + ('0' + (d2.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d2.getUTCDate()).slice(-2)
+        }
+        var st = readJson(KEY_ALERT)
+        if (!st || typeof st !== 'object' || st.day !== day) st = { day: day, fired: {} }
+        var fired = st.fired && typeof st.fired === 'object' ? st.fired : {}
+        var line = null
+        var i
+
+        // ① 实测用尽（429 原文确认过；本地估算偏低时也算数）
+        var ex = Array.isArray(data.exhaustedModels) ? data.exhaustedModels : []
+        for (i = 0; i < ex.length; i++) {
+          var ke = 'exhausted:' + ex[i]
+          if (fired[ke]) continue
+          fired[ke] = 1
+          if (!line) line = shortModel(ex[i]) + ' 今天的额度用光了喵 —— 再派它就要撞 429，白烧一轮。'
+        }
+
+        // ② 最紧的型号到 80%（已经用尽的不重复喊）
+        var b = data.bottleneck
+        var ratio = typeof data.ratio === 'number' ? data.ratio : 0
+        if (b && ratio >= 0.8 && ex.indexOf(b) < 0 && !fired['tight:' + b]) {
+          fired['tight:' + b] = 1
+          if (!line) {
+            var remain = null
+            var pm = Array.isArray(data.perModel) ? data.perModel : []
+            for (i = 0; i < pm.length; i++) {
+              if (pm[i] && pm[i].model === b) { remain = pm[i].remaining; break }
+            }
+            if (remain === null && typeof data.remaining === 'number') remain = data.remaining
+            line = '最紧的 ' + shortModel(b) + ' 只剩 ' + (remain === null ? '几' : remain) + ' 次喵，省着点用。'
+          }
+        }
+
+        st.fired = fired
+        writeJson(KEY_ALERT, st)
+        return line
+      } catch (err) {
+        console.error(LOG + ' 阈值提醒失败', err)
+        return null
       }
     }
 
@@ -651,20 +717,30 @@
               resetAt: data.resetAt || 0,
               bottleneck: data.bottleneck || null,
               perModel: Array.isArray(data.perModel) ? data.perModel : [],
+              // 2026-10-16 补：host 一直在下发这个字段，这里当初却漏了接 ⇒ currentView()
+              // 里那句兜底判断（拿 exhaustedModels 查当前型号是否已用尽）恒为 false。
+              exhaustedModels: Array.isArray(data.exhaustedModels) ? data.exhaustedModels : [],
               totalUsed: typeof data.totalUsed === 'number' ? data.totalUsed : null,
               source: data.source || '',
               degraded: !!data.degraded,
               stale: !!data.stale
             })
+            // 阈值提醒优先于日常播报：「马上要撞 429 了」是必须知道的事，不是顺便说说。
+            var alert = thresholdAlert(data)
+            var tu = typeof state.totalUsed === 'number' ? state.totalUsed : null
             if (firstTime) {
               var hour = new Date().getHours()
-              say(hour >= 23 || hour < 6 ? '这么晚还不睡喵……本喵陪着你。' : '本喵上线了喵！今天还剩 ' + state.remaining + ' 次额度。')
+              if (alert) say(alert)
+              else say(hour >= 23 || hour < 6 ? '这么晚还不睡喵……本喵陪着你。' : '本喵上线了喵！今天还剩 ' + state.remaining + ' 次额度。')
+              // ⚠️ 首次也要把基线记下来：原先这一支不赋值，于是 lastTotalUsed 一直是 null，
+              // 第二次刷新仍然比不了 —— 上面注释说的"首次只记录不播报"其实没生效（要等到第三次）。
+              if (tu !== null) lastTotalUsed = tu
             } else {
               // 用量涨了就吭一声 —— 这是"别的会话派了哈基米子代理"**唯一的可见信号**。
               // （实测：只在派子代理的会话自己知道，别处完全看不到）。
-              // 只在**增加**时播报，且首次加载只记录不播报（否则一上线就喊）。
-              var tu = typeof state.totalUsed === 'number' ? state.totalUsed : null
-              if (tu !== null && lastTotalUsed !== null && tu > lastTotalUsed) {
+              if (alert) {
+                say(alert)
+              } else if (tu !== null && lastTotalUsed !== null && tu > lastTotalUsed) {
                 say('有人叫哈基米了喵 —— 今天累计 ' + tu + ' 次。')
               }
               if (tu !== null) lastTotalUsed = tu
