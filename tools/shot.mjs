@@ -52,7 +52,7 @@ const server = http.createServer((req, res) => {
         { model: 'gemini-3.5-flash', used: 17, remaining: 3, exhausted: false },
         { model: 'gemini-3.6-flash', used: 2, remaining: 18, exhausted: false },
       ],
-      byModel: {}, resetAt: Date.now() + 13 * 3600 * 1000 + 25 * 60 * 1000, source: 'session-log',
+      byModel: {}, totalUsed: mockUsed + 6, resetAt: Date.now() + 13 * 3600 * 1000 + 25 * 60 * 1000, source: 'session-log',
     }))
   }
   send(404, 'text/plain', 'not found')
