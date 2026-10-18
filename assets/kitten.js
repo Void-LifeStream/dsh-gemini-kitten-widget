@@ -46,13 +46,13 @@
       //    太平洋午夜改成 UTC 午夜时，写死的句子会当场变成错话。一律用 {used}/{remaining}/{limit}/{model} 占位符。
       '本喵是这些额度里最漂亮的一只喵！',
       '今天状态不错喵，随便用～',
-      // —— 以下是有性格的台词 ——
+      // —— 以下为本机私货（素材取自 SELF-NOTE.md）——
       // ⚠️ 视角纪律：这里是**哈基米（Gemini）**的嘴，只说她自己的事。
-      //    她是猫娘，别让她自称别的角色（写串了会很怪）。
+      //    「我是鲸鱼」「大肥鱼」这类话属于鲸鱼娘那一侧，写在这儿会串味（用户 2026-10-15 指出）。
       //    她的私货请写进 ~/.dsh/widget-lines.json 的 kitten 段，那里可以随时加、刷新即生效。
       '隔壁那只鲸鱼娘只会数钱，本喵会数次数喵。',
       'DeepSeek 打喷嚏的时候，本喵能顶上喵。',
-      '赠金是别人的，本喵这边只有次数喵。',
+      '隔壁刚拿了 43 块赠金，本喵这边只有次数喵。',
       '{model} 还剩 {remaining} 次，够本喵撒个欢喵。',
       '点本喵肚子上的牌子，能看别的型号喵。',
       '放心用喵，本喵的额度还够你折腾。',
@@ -586,7 +586,7 @@
           var vRemain = v && typeof v.remaining === 'number' ? v.remaining : (state.remaining || 0)
           var ratio = limit > 0 ? Math.max(0, Math.min(1, vUsed / limit)) : 0
           // 色级按"**正在看的这个型号**"算。从前永远按最紧的算 —— 于是 3.8 一用尽，
-          // 连还剩 18 次的 3.6 也跟着飘红（实测踩到）。
+          // 连还剩 18 次的 3.6 也跟着飘红（用户 2026-10-15 反馈）。
           var lvl = (v && v.exhausted) ? 'danger' : (ratio >= 0.95 ? 'danger' : ratio >= 0.8 ? 'warn' : 'ok')
           root.setAttribute('data-level', lvl)
           usedEl.textContent = String(vUsed)
@@ -594,8 +594,8 @@
           fillEl.style.width = (ratio * 100).toFixed(1) + '%'
           // 副行：**型号 + 该型号剩余 + 今日合计**。
           // 为什么要"今日合计"：原先只显示"最紧的那个模型"，于是**别的会话派子代理消耗配额时，
-          // 只要没顶到 80% 告警线，挂件就一声不响**。
-          // 合计放在这一行，一眼可见。
+          // 只要没顶到 80% 告警线，挂件就一声不响** —— 用户 2026-10-16 的原话是
+          // 「本机今天跑了很多哈基米子代理调用，但我完全不知道」。合计放在这一行，一眼可见。
           // 重置时间挪进 tooltip（徽章宽度有限，一行放不下三样）。
           var parts = []
           if (v) parts.push(shortModel(v.model) + ' 剩' + vRemain)
@@ -616,7 +616,8 @@
     }
 
     /**
-     * 阈值主动提醒 —— 要的是**可见性**；但"用量又涨了"和"马上要撞 429 了"不是一回事：
+     * 阈值主动提醒 —— 用户 2026-10-16 的原话：「本机今天跑了很多哈基米子代理调用，
+     * 但我完全不知道」。要的是**可见性**；但"用量又涨了"和"马上要撞 429 了"不是一回事：
      * 免费层每模型 20 次/天，撞 429 就等于白烧一轮子代理 ⇒ 快用光 / 已用光必须专门喊。
      *
      * 规则（每个配额日每条只喊一次 —— 否则 30 秒刷一次就喊一次，会烦死人）：
@@ -737,7 +738,7 @@
               if (tu !== null) lastTotalUsed = tu
             } else {
               // 用量涨了就吭一声 —— 这是"别的会话派了哈基米子代理"**唯一的可见信号**。
-              // （实测：只在派子代理的会话自己知道，别处完全看不到）。
+              // 用户 2026-10-16：「本机今天跑了很多哈基米子代理调用，但我完全不知道」。
               if (alert) {
                 say(alert)
               } else if (tu !== null && lastTotalUsed !== null && tu > lastTotalUsed) {
@@ -853,7 +854,7 @@
       })
       // —— 点徽章 = 换一个型号看（猫娘本体仍然是"点一下换台词"）——
       //   配额按模型独立，可徽章一次只放得下一行；从前永远显示"最紧的那个"，
-      //   于是 3.8 一用尽就整片飘红，把还宽裕的型号全埋了（实测踩到）。
+      //   于是 3.8 一用尽就整片飘红，把还宽裕的型号全埋了（用户 2026-10-15 反馈）。
       try {
         var badgeEl = root.querySelector('.dshk-badge')
         if (badgeEl) {
@@ -905,14 +906,25 @@
       console.error(LOG + ' 交互注册失败（挂件会显示但点不动）', err)
     }
 
-    // —— 窗口变化：把自己拉回视口内 ——
+    // —— 窗口变化：只在**真的跑到视口外**时复位，不再每次 resize 都重写坐标 ——
+    // [本机补丁 2026-10-18] 原逻辑每次 resize 都用「当前实际位置」clampAndApply 并写回
+    // KEY_POS；而 resize 触发时布局往往还没更新（getBoundingClientRect 取到旧值）⇒
+    // 切换窗口/全屏会让挂件一格一格地漂走（用户反馈「每切换一次她就跑」）。
+    // 改为：越界才复位到默认右下角（right:10 / bottom:158），否则保留用户拖到的位置。
     try {
       window.addEventListener('resize', function () {
         try {
           if (!root.style.left || root.style.left === 'auto') return
           var r = root.getBoundingClientRect()
-          var p = clampAndApply(r.left, r.top)
-          writeJson(KEY_POS, p)
+          var w = window.innerWidth
+          var h = window.innerHeight
+          if (r.left < 0 || r.top < 0 || r.right > w + 1 || r.bottom > h + 1) {
+            writeJson(KEY_POS, null)
+            root.style.left = 'auto'
+            root.style.top = 'auto'
+            root.style.right = '10px'
+            root.style.bottom = '158px'
+          }
         } catch (err) {}
       })
       document.addEventListener('visibilitychange', function () {
