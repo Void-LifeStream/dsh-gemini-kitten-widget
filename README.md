@@ -183,7 +183,7 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
 抠图（重新处理形象）用 ComfyUI 自带的 python：
 
 ```powershell
-& "F:\ComfyUI\ComfyUI-aki-v3.2\python\python.exe" tools\cutout.py <源图> assets\kitten-art.png 480
+& python tools\cutout.py <源图> assets\kitten-art.png 480
 ```
 
 ### 血泪避坑（写给下一个改它的人）
