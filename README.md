@@ -182,6 +182,15 @@ dsh-gemini-kitten-widget/
 - **改了 `lib/index.js`** → 需要重启 DSH。
 - 改配额口径：`DSHK_QUOTA_PER_MODEL=20`、`DSHK_QUOTA_TZ=UTC`。
 
+- **发布前先跑 `node tools/sync-check.cjs`** —— 检查本地开发目录与 GitHub 远端的差异。
+
+  为什么需要：本机那份开发副本**不是 git 仓库**，和远端之间**没有任何自动同步**。
+  2026-10-19 发 0.1.3 时才发现远端有 `LICENSE` / `CHANGELOG.md` / `.gitignore` / `docs/`
+  而本地一个都没有 —— 这类差异要到 `npm publish` 那一刻才暴露。
+
+  快检只比文件列表（1 次 API 调用，约 1 秒）；想看内容差异加 `--deep`。
+  它**只报告、不改任何文件** —— 看到差异后仍需人工确认，别盲目覆盖。
+
 ### 自测脚本（本机 node 不在 PATH 里，用 DSH 运行时那个）
 
 ```powershell
