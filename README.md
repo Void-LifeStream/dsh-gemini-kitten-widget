@@ -98,13 +98,16 @@ host 半随 `/dsh-kitten/state` 一起下发，客户端**追加**（不覆盖�
 
 | 操作 | 效果 |
 |---|---|
-| **拖动** | 移动挂件；松手后自动**吸附**到最近的屏幕边缘 |
+| **拖动** | 移动挂件；松手后自动**吸附**到最近的屏幕边缘（吸附区 = 视口 12%，贴边 4px） |
 | **单击猫娘** | 换一句台词（台词随额度状态变化） |
 | **单击徽章** | **切换查看哪个型号**（配额按模型独立，一轮只放得下一行） |
+| **拖到屏幕左半边** | 立绘**镜像翻转**（脸朝右），让她始终面向屏幕中央 |
 | **右键** | 回到默认位置（鲸鱼挂件上方） |
 | **悬停** | 全部型号的明细 / 重置时间 / 数据来源 |
 
-位置记在 `localStorage`，刷新后保持。
+位置**同时存两份**：服务端 `~/.dsh/gemini-kitten-widget/pos.json`（跨重启的真源）
++ `localStorage`（本次会话的快速缓存）。所以**重启 DSH 也不丢**——
+桌面版每次重启 Web GUI 端口都会变，`localStorage` 按 origin 隔离，光靠它撑不过一次重启。
 
 ## 安装
 
@@ -140,8 +143,8 @@ git clone https://github.com/Void-LifeStream/dsh-gemini-kitten-widget
 dsh-gemini-kitten-widget/
 ├─ package.json          dsh.bundle.patch → cordis.patch.yml
 ├─ cordis.patch.yml      挂载声明（insert 一条）
-├─ lib/index.js          host 半：注入行 + 三个只读路由 + 配额统计
-├─ assets/kitten.js      client 半：渲染 + 拖拽吸附 + 台词 + SVG 兜底
+├─ lib/index.js          host 半：注入行 + 三只读路由 + 位置读写 + 配额统计
+├─ assets/kitten.js      client 半：渲染 + 拖拽吸附/翻转 + 位置同步 + 台词 + SVG 兜底
 ├─ assets/kitten-art.png 形象立绘（本地生成，透明 PNG）
 └─ tools/                自测与出图脚本（见下）
 ```
@@ -153,16 +156,25 @@ dsh-gemini-kitten-widget/
    插件被关掉时路由注销 ⇒ 404 ⇒ **应用起不来**。内联行自己建 `<script src>` 并吞掉 `onerror`。
 2. `webServer.tapIndex` 往 `index.html` 注入 `<script defer>` —— web 形态通道。
 
-**路由**（都只读、不含任何凭据）：
+**路由**（三个只读 + 一个读写）：
 
 | 路由 | 作用 |
 |---|---|
 | `GET /dsh-kitten/widget.js` | 客户端脚本，URL 带 **mtime 指纹**（改完刷新即生效，无需重启） |
 | `GET /dsh-kitten/art.png` | 形象立绘，ETag 走 mtime |
 | `GET /dsh-kitten/state` | 配额 JSON |
+| `GET/POST/DELETE /dsh-kitten/pos` | 挂件位置，**跨重启持久化**（见下） |
 
-**安全姿态**：本插件不写配置、不碰凭据，所以没有鲸鱼娘那套写接口信任栅栏；
-只做「`Sec-Fetch-Site: cross-site` 一律拒」+ 委托宿主的 `connection.requestRejection`。
+**安全姿态**：前三条只读、不含凭据，沿用「`Sec-Fetch-Site: cross-site` 一律拒」
++ 委托宿主的 `connection.requestRejection`。
+
+`/pos` 是本插件**唯一的写接口**，额外加了三道限制：body 上限 **1 KiB**、
+只接受 `{ left, top }` 或 v:2 锚点（两个非负有限数）、写入走「临时文件 + rename」原子替换。
+
+**位置为什么存服务端**：DSH 桌面版用 `--port 0` 启动，每次重启 Web GUI 端口都变，
+而 `localStorage` 按 origin 隔离 ⇒ 光靠它每次重启都会清空。位置格式采用
+「锚点 + 距离」（`{ v:2, hAnchor, hDist, vAnchor, vDist }`），这样窗口化 ↔ 全屏切换时
+挂件会跟着视口重新映射，而不是钉在旧像素位置。
 
 ### 开发
 

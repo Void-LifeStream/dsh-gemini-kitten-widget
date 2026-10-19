@@ -25,6 +25,7 @@
   }
 
   var API_STATE = '/dsh-kitten/state'
+  var API_POS = '/dsh-kitten/pos'
   var ART_PATH = '/dsh-kitten/art.png'
   var REFRESH_MS = 30000
   var KEY_POS = 'dsh-kitten-widget:pos'
@@ -106,7 +107,8 @@
     '-webkit-user-select:none;user-select:none;touch-action:none;',
     'filter:drop-shadow(0 6px 16px rgba(20,16,50,.38));',
     'transition:opacity .25s ease}',
-    '.dshk-root.dshk-dragging{transition:none;cursor:grabbing}',
+    // !important：松手时的 inline transition 如果在 220ms 内被下一次拖动撞上，靠它压住（否则跟手会滞后）
+    '.dshk-root.dshk-dragging{transition:none !important;cursor:grabbing}',
 
     '.dshk-art{position:relative;width:142px;height:98px;cursor:grab;pointer-events:auto;',
     'animation:dshk-float 4.2s ease-in-out infinite}',
@@ -115,6 +117,9 @@
     '.dshk-img{width:100%;height:100%;display:block;object-fit:contain;',
     '-webkit-user-drag:none;user-select:none;pointer-events:none}',
     '.dshk-svg{width:100%;height:100%;display:block;overflow:visible}',
+    // 立绘默认**脸朝左**（见 assets/kitten-art.png）：拖到视口左半边时镜像成朝右，
+    // 让她始终"面向屏幕中央"—— 小鲸鱼那条翻转线是同一个思路，只是它是可调的。
+    '.dshk-root.dshk-flip .dshk-img,.dshk-root.dshk-flip .dshk-svg{transform:scaleX(-1)}',
     '@keyframes dshk-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}',
 
     '.dshk-eye{animation:dshk-blink 5.2s infinite;transform-box:fill-box;transform-origin:center}',
@@ -320,6 +325,103 @@
   }
 
   // ==========================================================================
+  // 位置锚点（2026-10-19 加）
+  // --------------------------------------------------------------------------
+  // 存「离哪条边多远」，而不是绝对 left/top —— 否则从窗口化切到全屏时视口变大，
+  // 挂件会钉在原来的像素位置上（用户反馈：「她不会跟着跑到全屏的左下角」）。
+  // 格式照 dsh-whale-widget 的 v:2 来（那边已经验证过没这个问题）：
+  //   { v:2, hAnchor:'left'|'right', hDist, vAnchor:'top'|'bottom', vDist }
+  // ==========================================================================
+  var POS_DEFAULT_W = 142
+  var POS_DEFAULT_H = 98
+
+  function posToAnchor(left, top, w, h) {
+    var vw = window.innerWidth
+    var vh = window.innerHeight
+    var leftDist = Math.max(0, left)
+    var rightDist = Math.max(0, vw - (left + w))
+    var topDist = Math.max(0, top)
+    var bottomDist = Math.max(0, vh - (top + h))
+    return {
+      v: 2,
+      hAnchor: leftDist <= rightDist ? 'left' : 'right',
+      hDist: Math.round(Math.min(leftDist, rightDist)),
+      vAnchor: topDist <= bottomDist ? 'top' : 'bottom',
+      vDist: Math.round(Math.min(topDist, bottomDist))
+    }
+  }
+
+  function anchorToPos(a, w, h) {
+    var vw = window.innerWidth
+    var vh = window.innerHeight
+    var maxLeft = Math.max(0, vw - w)
+    var maxTop = Math.max(0, vh - h)
+    var hDist = Math.min(Math.max(0, a.hDist), maxLeft)
+    var vDist = Math.min(Math.max(0, a.vDist), maxTop)
+    return {
+      left: a.hAnchor === 'left' ? hDist : maxLeft - hDist,
+      top: a.vAnchor === 'top' ? vDist : maxTop - vDist
+    }
+  }
+
+  function isAnchor(v) {
+    return !!v && v.v === 2
+      && (v.hAnchor === 'left' || v.hAnchor === 'right')
+      && (v.vAnchor === 'top' || v.vAnchor === 'bottom')
+      && typeof v.hDist === 'number' && isFinite(v.hDist) && v.hDist >= 0
+      && typeof v.vDist === 'number' && isFinite(v.vDist) && v.vDist >= 0
+  }
+
+  /** 旧格式 {left,top} → 锚点；已是锚点则原样返回；都不认识返回 null。 */
+  function normalizeAnchor(raw, w, h) {
+    if (!raw) return null
+    if (isAnchor(raw)) return raw
+    if (typeof raw.left === 'number' && typeof raw.top === 'number'
+      && isFinite(raw.left) && isFinite(raw.top)) {
+      return posToAnchor(raw.left, raw.top, w || POS_DEFAULT_W, h || POS_DEFAULT_H)
+    }
+    return null
+  }
+
+  // ==========================================================================
+  // 位置的服务端持久化（2026-10-19 加）
+  // --------------------------------------------------------------------------
+  // 背景：DSH 桌面版每次重启都换 Web GUI 端口 ⇒ 页面 origin 变 ⇒ localStorage
+  // 被整个清空 ⇒ 挂件位置每次都丢。所以位置另存一份在服务端
+  // （GET/POST /dsh-kitten/pos ⇄ ~/.dsh/gemini-kitten-widget/pos.json），
+  // localStorage 只当「本次会话的快速缓存」。
+  // 服务端不可用时这两个函数都安静失败，行为与改动前完全一致。
+  // ==========================================================================
+  function fetchServerPos() {
+    try {
+      return fetch(API_POS, { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null })
+        .then(function (j) {
+          if (j && j.ok && j.pos && typeof j.pos.left === 'number' && typeof j.pos.top === 'number') {
+            return j.pos
+          }
+          return null
+        })
+        .catch(function () { return null })
+    } catch (err) {
+      return Promise.resolve(null)
+    }
+  }
+
+  function pushServerPos(p) {
+    try {
+      fetch(API_POS, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p === null ? null : { left: p.left, top: p.top }),
+        keepalive: true
+      }).catch(function () {})
+    } catch (err) {}
+  }
+
+  // ==========================================================================
   // 主流程
   // ==========================================================================
   function init() {
@@ -388,18 +490,76 @@
       return { left: l, top: t }
     }
 
+    /** 按锚点把挂件摆到位（启动恢复与 resize 共用）。返回夹紧后的 left/top。 */
+    function applyAnchorNow(a) {
+      var r = root.getBoundingClientRect()
+      var w = r.width || POS_DEFAULT_W
+      var h = r.height || POS_DEFAULT_H
+      var p = anchorToPos(a, w, h)
+      return clampAndApply(p.left, p.top)
+    }
+
+    /** 把当前实际位置反算成锚点（并夹成合法值）。 */
+    function currentAnchor() {
+      var r = root.getBoundingClientRect()
+      return posToAnchor(r.left, r.top, r.width || POS_DEFAULT_W, r.height || POS_DEFAULT_H)
+    }
+
+    /**
+     * 立绘默认**脸朝左**；拖到视口左半边就镜像成朝右，让她始终面向屏幕中央。
+     * （小鲸鱼的「翻转线」是同一个思路，只是那边可调；这里固定在中线。）
+     */
+    function updateFlip() {
+      try {
+        var r = root.getBoundingClientRect()
+        var inLeftHalf = (r.left + r.width / 2) < (window.innerWidth / 2)
+        if (inLeftHalf) root.classList.add('dshk-flip')
+        else root.classList.remove('dshk-flip')
+      } catch (err) {}
+    }
+
     try {
-      var saved = readJson(KEY_POS)
-      if (saved && typeof saved.left === 'number' && typeof saved.top === 'number' && isFinite(saved.left) && isFinite(saved.top)) {
-        setPos(saved.left, saved.top)
-        // 视口变化后旧坐标可能跑到屏幕外，挂载后再钳一次
+      // 位置一律按「锚点」恢复：锚点只认视口尺寸，不认绝对像素 ⇒ 窗口化/全屏切换时不会跑偏。
+      var savedAnchor = normalizeAnchor(readJson(KEY_POS))
+      if (savedAnchor) {
+        // 首帧先用默认尺寸粗算摆上（不闪），挂载后再用真实尺寸精确重算
+        var p0 = anchorToPos(savedAnchor, POS_DEFAULT_W, POS_DEFAULT_H)
+        setPos(p0.left, p0.top)
         requestAnimationFrame(function () {
           try {
-            var fixed = clampAndApply(saved.left, saved.top)
-            if (fixed.left !== saved.left || fixed.top !== saved.top) writeJson(KEY_POS, fixed)
+            var fixed = applyAnchorNow(savedAnchor)
+            var a2 = currentAnchor()
+            if (a2.hAnchor !== savedAnchor.hAnchor || a2.hDist !== savedAnchor.hDist
+              || a2.vAnchor !== savedAnchor.vAnchor || a2.vDist !== savedAnchor.vDist) {
+              writeJson(KEY_POS, a2)
+            }
+            updateFlip()
           } catch (err) {}
         })
       }
+      // 服务端才是跨重启的真源：有值就以它为准；没有就把本地缓存推上去做种。
+      fetchServerPos().then(function (serverPos) {
+        // 等一帧再算：clampAndApply 依赖 root 已挂进 DOM（否则尺寸是 0，位置会跑偏）。
+        requestAnimationFrame(function () {
+          try {
+            var localAnchor = normalizeAnchor(readJson(KEY_POS), root.offsetWidth, root.offsetHeight)
+            var serverAnchor = normalizeAnchor(serverPos, root.offsetWidth, root.offsetHeight)
+            if (!serverAnchor) {
+              if (localAnchor) pushServerPos(localAnchor)
+              return
+            }
+            if (localAnchor && localAnchor.hAnchor === serverAnchor.hAnchor
+              && localAnchor.hDist === serverAnchor.hDist
+              && localAnchor.vAnchor === serverAnchor.vAnchor
+              && localAnchor.vDist === serverAnchor.vDist) return
+            writeJson(KEY_POS, serverAnchor)
+            applyAnchorNow(serverAnchor)
+            pushServerPos(currentAnchor())
+          } catch (err) {
+            console.error(LOG + ' 服务端位置应用失败', err)
+          }
+        })
+      })
     } catch (err) {
       console.error(LOG + ' 恢复位置失败（用默认位置）', err)
     }
@@ -813,12 +973,24 @@
           var r = root.getBoundingClientRect()
           var left = r.left
           var top = r.top
-          var TH = 74
-          if (left < TH) left = 10
-          else if (w - (left + r.width) < TH) left = w - r.width - 10
-          var THV = 54
-          if (top < THV) top = 10
-          else if (h - (top + r.height) < THV) top = h - r.height - 10
+          // 吸附区按**视口比例**算（照 dsh-whale-widget 那套手感）：
+          // 原先是写死的 74px，在 2560 宽的屏上不到 3% —— 等于没有吸附感。
+          // 12% 并夹在 [60,220] / [50,200]：大屏够宽，小窗口也不会贪。
+          var TH = Math.min(220, Math.max(60, Math.round(w * 0.12)))
+          var THV = Math.min(200, Math.max(50, Math.round(h * 0.12)))
+          // 贴边距离 4px（= clampAndApply 的下限）：原来 10px 在同一屏上看着"没吸到底"
+          var EDGE = 4
+          if (left < TH) left = EDGE
+          else if (w - (left + r.width) < TH) left = w - r.width - EDGE
+          if (top < THV) top = EDGE
+          else if (h - (top + r.height) < THV) top = h - r.height - EDGE
+          // 松手时给 0.16s 过渡，让「吸过去」看得见；拖动中由 .dshk-dragging 用 !important 关掉。
+          try {
+            root.style.transition = 'left .16s ease, top .16s ease'
+            setTimeout(function () {
+              try { root.style.transition = '' } catch (err) {}
+            }, 220)
+          } catch (err) {}
           return clampAndApply(left, top)
         } catch (err) {
           console.error(LOG + ' 吸附失败', err)
@@ -837,7 +1009,12 @@
             poke()
           } else {
             var p = snap()
-            if (p) writeJson(KEY_POS, p)
+            if (p) {
+              var a = posToAnchor(p.left, p.top, root.offsetWidth || POS_DEFAULT_W, root.offsetHeight || POS_DEFAULT_H)
+              writeJson(KEY_POS, a)
+              pushServerPos(a)
+              updateFlip()
+            }
           }
         } catch (err) {
           console.error(LOG + ' pointerup 失败', err)
@@ -892,6 +1069,7 @@
         try {
           e.preventDefault()
           writeJson(KEY_POS, null)
+          pushServerPos(null)
           root.style.left = 'auto'
           root.style.top = 'auto'
           root.style.right = '10px'
@@ -906,26 +1084,26 @@
       console.error(LOG + ' 交互注册失败（挂件会显示但点不动）', err)
     }
 
-    // —— 窗口变化：只在**真的跑到视口外**时复位，不再每次 resize 都重写坐标 ——
-    // [本机补丁 2026-10-18] 原逻辑每次 resize 都用「当前实际位置」clampAndApply 并写回
-    // KEY_POS；而 resize 触发时布局往往还没更新（getBoundingClientRect 取到旧值）⇒
-    // 切换窗口/全屏会让挂件一格一格地漂走（用户反馈「每切换一次她就跑」）。
-    // 改为：越界才复位到默认右下角（right:10 / bottom:158），否则保留用户拖到的位置。
+    // —— 窗口变化：按锚点重映射（2026-10-19 改）——
+    // 旧逻辑只在「真的跑到视口外」时复位；窗口化 → 全屏时视口变大，挂件却还钉在原来的
+    // 像素位置上，看起来"不跟窗口走"（用户反馈：拖到左下角，全屏后不在左下角）。
+    // 现在按存的锚点重算：左锚点 + 下锚点 ⇒ 任何视口下都贴着左下角。
+    // ⚠️ debounce + rAF：resize 期间布局往往还没更新，立刻读 rect 会拿到旧值
+    //    （2026-10-18 那版"每次 resize 重算就一格一格地漂"的坑正是这么来的）。
     try {
+      var resizeTimer = null
       window.addEventListener('resize', function () {
-        try {
-          if (!root.style.left || root.style.left === 'auto') return
-          var r = root.getBoundingClientRect()
-          var w = window.innerWidth
-          var h = window.innerHeight
-          if (r.left < 0 || r.top < 0 || r.right > w + 1 || r.bottom > h + 1) {
-            writeJson(KEY_POS, null)
-            root.style.left = 'auto'
-            root.style.top = 'auto'
-            root.style.right = '10px'
-            root.style.bottom = '158px'
-          }
-        } catch (err) {}
+        if (resizeTimer) clearTimeout(resizeTimer)
+        resizeTimer = setTimeout(function () {
+          resizeTimer = null
+          requestAnimationFrame(function () {
+            try {
+              var a = normalizeAnchor(readJson(KEY_POS), root.offsetWidth, root.offsetHeight)
+              if (a) applyAnchorNow(a)
+              updateFlip()
+            } catch (err) {}
+          })
+        }, 120)
       })
       document.addEventListener('visibilitychange', function () {
         try {
